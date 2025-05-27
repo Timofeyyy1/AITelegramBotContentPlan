@@ -1,0 +1,24 @@
+# Python-специфичные файлы
+__pycache__/
+*.pyc
+*.pyd
+*.so
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Конфигурационные файлы с токенами
+config.py
+*.env
+.env
+
+pyvenv.cfg
+
+# Логи
+*.log
+
+# Другие временные/служебные файлы
+.DS_Store # macOS
+Thumbs.db # Windows
