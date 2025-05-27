@@ -20,8 +20,9 @@ git clone https://github.com/Timofeyyy1/AITelegramBotContentPlan.git
 
 # Перейдите в папку проекта
 cd AIContentBot
-
-### 3. Установка зависимостей
+```
+ ### 3. Установка зависимостей
+```
 
 # Создайте виртуальное окружение
 python -m venv venv
@@ -34,15 +35,15 @@ python -m venv venv
 
 # Установите все необходимые библиотеки
 pip install -r requirements.txt
-
+```
 ### 4. Конфигурация API ключей и токенов
-
+```
 BOT_TOKEN=ВАШ_ТОКЕН_ИЗ_BOTFATHER
 AI_TOKEN=ВАШ_ТОКЕН_ИЗ_OPENROUTER
 # Возможно, другие токены, если они используются
-
+```
 ### 5. Запуск бота
-
+```
 # Убедитесь, что виртуальное окружение активировано
 # Запустите основной файл бота
 python run.py
