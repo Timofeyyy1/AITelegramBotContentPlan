@@ -14,7 +14,7 @@
 cd путь/к/вашей/папке/проектов
 
 # Клонируйте репозиторий
-git clone https://github.com/Timofeyyy1/AIContentBot.git
+git clone https://github.com/Timofeyyy1/AITelegramBotContentPlan.git
 
 # Перейдите в папку проекта
 cd AIContentBot
