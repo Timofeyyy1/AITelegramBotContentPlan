@@ -1,12 +1,15 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Reply-клавиатура с одной кнопкой
-def get_main_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🔄 Изменить план")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    return keyboard
+def get_content_plan_actions_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура после генерации контент-плана.
+    Предлагает создать пост для первого дня.
+    """
+    buttons = [
+        [
+            InlineKeyboardButton(text="Создать пример поста 💻", callback_data="generate_example_post")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# get_post_generation_actions_keyboard удалена, так как не используется
