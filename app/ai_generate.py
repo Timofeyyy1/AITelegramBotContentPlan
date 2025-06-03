@@ -1,11 +1,13 @@
 import asyncio
 import re
+import logging
 from openai import AsyncOpenAI
 from app.utils.markdown_utils import escape_markdown_v2 
-from app.utils.message_utils import split_text
+from app.utils.message_utils import split_text 
 from config import AI_TOKEN
 
-# Инициализация клиента OpenRouter
+logger = logging.getLogger(__name__)
+
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=AI_TOKEN,
@@ -14,40 +16,86 @@ client = AsyncOpenAI(
 async def generate(prompt: str) -> str:
     try:
         completion = await client.chat.completions.create(
-            model="google/gemma-3n-e4b-it:free", 
+            model="google/gemini-2.5-flash-preview-05-20",  # Обновленная модель
             messages=[
                 {"role": "user", "content": prompt}
             ],
-            timeout=40
+            timeout=240,
+            max_tokens=4000
         )
 
-        if completion and hasattr(completion, 'choices') and len(completion.choices):
-            content = completion.choices[0].message.content
+        if completion and completion.choices:
+            logger.debug(f"Full Completion Object: {completion.model_dump_json(indent=2)}")
 
-            # 1. Очистка текста от лишних символов (ТОЛЬКО шум, оставляем маркеры для format_content)
-            content = clean_content(content)
-            
-            # 2. Форматирование текста (добавление Markdown на основе чистых данных)
-            content = format_content(content)
+            if completion.choices[0].message and completion.choices[0].message.content:
+                content = completion.choices[0].message.content
+                logger.debug(f"Raw AI response (content extracted):\n---\n{content}\n---")
 
-            # 3. Экранирование MarkdownV2 (только здесь и только один раз)
-            content = escape_markdown_v2(content) 
+                # --- ЛОГИКА УДАЛЕНИЯ ЭХО ПРОМТА И "ВСТУПЛЕНИЯ" ОТ LLM ---
+                # Ищем начало контент-плана (например, "День 1:")
+                # Удаляем все, что идет до первого такого вхождения.
+                first_day_match = re.search(r'^(?:.*?)(?=День \d+:\s*\w+)', content, flags=re.DOTALL | re.MULTILINE | re.IGNORECASE)
+                if first_day_match:
+                    content = content[first_day_match.start():].strip()
+                    logger.debug(f"Content after aggressive initial cleanup (before clean_content):\n---\n{content}\n---")
+                else:
+                    logger.warning("Не удалось найти начало контент-плана (День X:) в ответе ИИ. Пробуем обработать весь контент.")
+                    content = content.strip()
 
-            return content.strip() if content else "Модель не вернула содержание."
+                # 1. Очистка текста от лишних символов (ТОЛЬКО шум).
+                content = clean_content(content)
+                logger.debug(f"Content after clean_content:\n---\n{content}\n---")
+                
+                # 2. Форматирование текста (ТЕПЕРЬ ПРОЩЕ, ТАК КАК ИИ ГЕНЕРИРУЕТ MARKDOWN)
+                # Эта функция будет выполнять минимальную доформатировку/нормализацию.
+                content = format_content_minimal(content)  # Calling minimal formatting function
+                logger.debug(f"Content after format_content_minimal (Markdown assumed):\n---\n{content}\n---")
+
+                # 3. Экранирование MarkdownV2 (только здесь, только один раз, пропускает ** и _ )
+                # Теперь мы используем улучшенную escape_markdown_v2.
+                final_content = escape_markdown_v2(content)
+                logger.debug(f"Content after final MarkdownV2 escaping:\n---\n{final_content}\n---")
+
+                # Возвращаем "Модель не вернула содержание.", если content был пуст после всех обработок
+                # или если final_content оказался пустым.
+                return final_content.strip() if final_content.strip() else escape_markdown_v2("Модель не вернула содержание.")
+            else:
+                logger.error(f"Модель вернула пустой 'message.content' или 'message' отсутствует. Completion: {completion.model_dump_json(indent=2)}")
+                return escape_markdown_v2("Модель не вернула содержание или вернула пустой ответ.")
         else:
-            return "Не удалось получить ответ от модели."
+            logger.error(f"Completion object has no choices or choices list is empty. Completion: {completion.model_dump_json(indent=2)}")
+            return escape_markdown_v2("Модель не вернула варианты ответов.")
     except Exception as e:
-        print(f"Ошибка при работе с ИИ: {e}")
-        return "Произошла ошибка при генерации. Пожалуйста, попробуйте еще раз."
+        logger.error(f"Ошибка при работе с ИИ: {e}", exc_info=True)
+        # Убедимся, что сообщение об ошибке тоже экранируется
+        error_message = f"Произошла ошибка при генерации\\. Детали: `{escape_markdown_v2(str(e))}`\\. Пожалуйста, попробуйте еще раз\\."
+        return error_message
+
 
 
 def clean_content(content: str) -> str:
+    """
+    Очищает текст от лишних символов (бэкслешей, избыточных пробелов/переносов строк,
+    возможных лишних разделителей).
+    Ожидает сырой текст от ИИ.
+    """
+    content = re.sub(r'\\+', '', content) # Удалить все последовательности бэкслешей
 
-    # Удалить все последовательности бэкслешей (\)
-    content = re.sub(r'\\+', '', content)
+    # Удаляем потенциальные лишние разделители (---), которые могут быть в начале или конце блоков,
+    # так как теперь ИИ сам их генерирует.
+    content = re.sub(r'(\n\n|^)(—{3,}|-{3,})(\n\n|$)', '\n\n', content)
+    # Удаляет одиночные дефисы, если они не являются частью слова (например, "— мы выберем")
+    content = re.sub(r'(?<!\S)—{1}(?!\S)', '', content) 
 
-    content = re.sub(r'__+', '', content) 
-    content = re.sub(r'---+', '', content)
+    # Удаляем двойные двоеточия (::)
+    content = re.sub(r'::+', ':', content)
+
+    # Удаляем удвоенные заголовки секций (например, "Заголовок: Заголовок:")
+    # Ищем шаблон "слово: слово:" и заменяем на "слово:"
+    content = re.sub(r'(\b\w+\s*:\s*)\1', r'\1', content, flags=re.IGNORECASE)
+    # Также убираем " (ста):" если оно идет после "Призыв к действию"
+    content = re.sub(r'Призыв к действию \(СТА\)\s*\(\w+\):\s*', r'Призыв к действию (СТА): ', content, flags=re.IGNORECASE)
+
 
     # Нормализация пробелов и переносов строк
     content = re.sub(r'[ \t]+', ' ', content).strip() 
@@ -58,87 +106,33 @@ def clean_content(content: str) -> str:
     return content.strip()
 
 
-def format_content(content: str) -> str:
-  
-    # Разделяем весь контент на блоки по заголовкам дней.
-    day_blocks = re.findall(r'(День \d+:\s*\w+\s*(?:(?:\n|\s)*.*?(?=\n\n*День \d+:\s*\w+|$))?)', content, re.DOTALL | re.IGNORECASE)
+# НОВАЯ/ОБНОВЛЕННАЯ ФУНКЦИЯ ФОРМАТИРОВАНИЯ
+def format_content_minimal(content: str) -> str:
+    """
+    Минимальное форматирование текста.
+    Предполагается, что ИИ уже сгенерировал большую часть Markdown.
+    Эта функция занимается лишь нормализацией разделителей и хэштегов.
+    """
     
-    formatted_output = []
+    # Нормализация разделителей между днями.
+    # ИИ может генерировать "---" или "— — —". Приводим к одному формату.
+    content = re.sub(r'(\n\n\s*—{3,}\s*\n\n)|(\n\n\s*-{3,}\s*\n\n)', '\n\n— — —\n\n', content)
     
-    # Обработка первой части, если она не является заголовком дня
-    if day_blocks and not re.match(r'День \d+:\s*\w+:', day_blocks[0].strip(), re.IGNORECASE):
+    # Убедимся, что нет более одного разделителя подряд в конце.
+    content = re.sub(r'(\n\n— — —\n\n){2,}$', '\n\n— — —\n\n', content)
 
-        if day_blocks[0].strip():
-            
-            formatted_output.append(f"**Вступление:**\n\n{day_blocks[0].strip()}")
-        day_blocks = day_blocks[1:]
+    # Нормализация абзацев (для избежания слишком частых \n)
+    # Если строка не заканчивается \n и за ней следует не \n (т.е. одиночный \n), добавляем вторую \n
+    content = re.sub(r'([^\n])\n(?!\n)', r'\1\n\n', content)
+    # Убираем больше двух \n подряд
+    content = re.sub(r'\n{3,}', '\n\n', content) 
 
-    for day_block_raw in day_blocks:
-        day_header_match = re.match(r'(День \d+:\s*\w+)', day_block_raw, re.IGNORECASE)
-        if not day_header_match:
-            continue
-
-        day_header = day_header_match.group(1).strip()
-        day_content_raw = day_block_raw[day_header_match.end():].strip()
-
-        formatted_day_header = f"**{day_header}**"
-        formatted_output.append(formatted_day_header)
-        
-        section_pattern = r'(Тема дня:|Краткое описание:|В примерах —|Примеры:|Бонус:|СТА:|Spoiler:|Хэштеги:|Визуальные материалы:|Результаты:|Инфографика:|Карточка с мемом:|Гифка с роботом-котом:|Скачайте чек-лист:|Дополнительно:|Примеры использования:|Ключевые выводы:)(.*?)(?=\n\n*(?:Тема дня:|Краткое описание:|В примерах —|Примеры:|Бонус:|СТА:|Spoiler:|Хэштеги:|Визуальные материалы:|Результаты:|Инфографика:|Карточка с мемом:|Гифка с роботом-котом:|Скачайте чек-лист:|Дополнительно:|Примеры использования:|Ключевые выводы:)|$)'
-        
-        sections = re.findall(section_pattern, day_content_raw, re.DOTALL | re.IGNORECASE)
-        
-        formatted_day_sections = []
-        
-        # Обрабатываем текст, который идет до первой секции (считаем это названием темы)
-        initial_text_match = re.match(r'^(.*?)(?:Тема дня:|Краткое описание:|В примерах —|Примеры:|Бонус:|СТА:|Spoiler:|Хэштеги:|Визуальные материалы:|Результаты:|Инфографика:|Карточка с мемом:|Гифка с роботом-котом:|Скачайте чек-лист:|Дополнительно:|Примеры использования:|Ключевые выводы:|$)', day_content_raw, re.DOTALL | re.IGNORECASE)
-        if initial_text_match and initial_text_match.group(1).strip():
-            formatted_day_sections.append(f'\n\n**{initial_text_match.group(1).strip()}**')
-            day_content_raw = day_content_raw[initial_text_match.end():].strip() 
-
-        # Обрабатываем найденные секции
-        for title, content_block in sections:
-            title = title.strip().replace(':', '') 
-            content_block = content_block.strip()
-
-            # Нормализация названия секции для отображения
-            if title.lower() == 'ста':
-                display_title = 'Призыв к действию (СТА)'
-            elif title.lower() in ['в примерах —', 'примеры', 'примеры использования']:
-                display_title = 'Примеры'
-            elif title.lower() == 'spoiler':
-                display_title = 'Спойлер'
-            elif title.lower() in ['визуальные материалы', 'гифка с роботом-котом', 'карточка с мемом', 'инфографика']:
-                display_title = 'Визуальные материалы'
-            elif title.lower() == 'скачайте чек-лист':
-                display_title = 'Чек-лист'
-            elif title.lower() == 'тема дня':
-                display_title = 'Тема дня' 
-            elif title.lower() == 'краткое описание':
-                display_title = 'Краткое описание'
-            else:
-                display_title = title.capitalize() 
-
-            # Добавляем заголовок секции жирным шрифтом и её содержимое
-            if content_block:
-                # Если секция - это список, убедимся, что формат списка сохранен
-                if re.match(r'^- ', content_block) or re.match(r'^\d+\. ', content_block):
-                    formatted_day_sections.append(f'\n\n**{display_title}:**\n{content_block}')
-                else:
-                    formatted_day_sections.append(f'\n\n**{display_title}:** {content_block}')
-            elif display_title: 
-                formatted_day_sections.append(f'\n\n**{display_title}:**')
-
-
-        day_text_final = "\n".join(formatted_day_sections)
-
-        # Это должно быть после всех остальных форматирований, но перед escape_markdown_v2
-        day_text_final = re.sub(r'(#\w+)', r'_\1_', day_text_final) 
-        
-        # Нормализация абзацев (замена одиночных \n на \n\n)
-        day_text_final = re.sub(r'([^\n])\n(?!\n)', r'\1\n\n', day_text_final)
-        day_text_final = re.sub(r'\n{3,}', '\n\n', day_text_final) 
-
-        formatted_output.append(day_text_final)
-        
-    return "\n\n— — —\n\n".join(formatted_output)
+    # Коррекция хэштегов: если ИИ сгенерировал #Хэштег, но не обернул в курсив,
+    # мы это сделаем здесь, убедившись, что #Хэштег: не станет _#Хэштег_:
+    # 1. Сначала обрабатываем #Хэштег: (оставляем двоеточие снаружи курсива)
+    content = re.sub(r'(#\w+):', r'_\1_:', content)
+    # 2. Затем обрабатываем все остальные #Хэштеги, которые не являются частью слова и не обернуты
+    # (поиск #Хэштег, не окруженного другими символами или уже курсивом)
+    content = re.sub(r'(?<![#_])(#\w+)(?![_#])', r'_\1_', content)
+    
+    return content.strip()
