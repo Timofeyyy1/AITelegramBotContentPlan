@@ -4,11 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def escape_markdown_v2(text: str) -> str:
-    """
-    Экранирует специальные символы MarkdownV2 для Telegram.
-    Корректно обрабатывает парные и непарные теги (**, _),
-    предотвращая ошибки Telegram.
-    """
+
     processed_chunks = []
     open_tags_stack = []
 
