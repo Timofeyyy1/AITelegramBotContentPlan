@@ -4,15 +4,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 def parse_formatted_plan_for_post(formatted_plan_text: str) -> dict | None:
-    """
-    Парсит уже отформатированный контент-план (MarkdownV2) и извлекает данные для первого дня.
-    Эта функция предназначена для парсинга *всего* сгенерированного плана, чтобы найти ДЕНЬ 1.
-    Ожидает, что заголовки дня и секций уже в Markdown (**День 1: Понедельник**).
-    """
-    # Ищем блок первого дня. Он начинается с жирного заголовка "**День 1: <День недели>**"
-    # и заканчивается либо следующим разделителем "— — —" или "---", либо концом текста.
+
     day_1_block_match = re.search(
-        r'^\s*\*\*(День 1:\s*\w+)\*\*(.*?)(?=\n\n(?:— — —|---|\*{2,4})|\Z)', # Added \*{2,4} to stop at extra asterisks
+        r'^\s*\*\*(День 1:\s*\w+)\*\*(.*?)(?=\n\n(?:— — —|---|\*{2,4})|\Z)',
         formatted_plan_text, re.DOTALL | re.MULTILINE | re.IGNORECASE
     )
     
@@ -21,7 +15,7 @@ def parse_formatted_plan_for_post(formatted_plan_text: str) -> dict | None:
         return None 
 
     day_data = {
-        'day_title': day_1_block_match.group(1).strip(), # Получаем "День 1: Понедельник"
+        'day_title': day_1_block_match.group(1).strip(), 
         'topic_title': '',
         'description': '',
         'cta': '',
